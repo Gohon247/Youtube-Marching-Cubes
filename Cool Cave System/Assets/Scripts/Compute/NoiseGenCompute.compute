@@ -1,0 +1,45 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#include "/Includes/Noise.Compute"
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+static const int numThread = 8;
+RWStructuredBuffer<float> noiseBuffer;
+StructuredBuffer<float3> seedOctaveOffset;
+int size;
+int numOctaves;
+float scale;
+float persistence;
+float lacunarity;
+
+float DootDoot(float3 pos, float scale, float frequency, float3 sOffset)
+{
+	float3 tempPos = (pos + sOffset) / scale * frequency;
+	float perlinValue = snoise(tempPos); //keijiro's 3d perlin github
+	return perlinValue;
+}
+
+[numthreads(numThread, numThread, numThread)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= size || id.y >= size || id.z >= size) {
+		return;
+	}
+    int currentSize = size / numThread;
+	int counter = 0;
+	int frequency = 1;
+	int amplitude = 1;
+	float noiseHeight = 0;
+	float perlinValue;
+
+	float3 pos = float3(id.x, id.y, id.z)-size/2;
+	for (int o = 0; o < numOctaves; o++)
+	{	
+		perlinValue = DootDoot(pos, scale, frequency, seedOctaveOffset[0]);
+		noiseHeight = noiseHeight + perlinValue * amplitude;
+		amplitude *= persistence;
+		frequency *= lacunarity;
+	}
+	noiseBuffer[id.z* size *size+ id.y* size + id.x] = noiseHeight;
+}
+

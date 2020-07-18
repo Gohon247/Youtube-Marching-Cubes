@@ -1,0 +1,159 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+//code for gpu of sphere and square
+#pragma kernel normal
+#pragma kernel sphere
+#include "Includes/MarchTables.compute"
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+static const int numThread = 8;
+struct Triangle {
+    float3 vertexA;
+    float3 vertexB;
+    float3 vertexC;
+};
+
+AppendStructuredBuffer<Triangle> triangles;
+StructuredBuffer<float> noiseMap;
+
+float genocide;
+int size;
+float radius;
+float3 center;
+float3 edge;
+bool applySandpaper;
+
+float3 interpolateVerts(float4 v1, float4 v2) {
+    //float center = abs(v1.w) + abs(v2.w); cool spikey effect
+    //return (v1.xyz + v2.xyz) / center;
+    float t = (genocide - v1.w) / (v2.w - v1.w);
+    return v1.xyz + t * (v2.xyz - v1.xyz);
+}
+
+int getPointIndex(int x, int y, int z) {
+    return z * size * size + y * size + x;
+}
+
+float distance(float3 v1) {
+    return sqrt(pow(v1.x - center.x, 2) + pow(v1.y - center.y, 2) + pow(v1.z - center.z, 2));
+}
+float distance(uint3 v1) {
+    return sqrt(pow(v1.x - center.x, 2) + pow(v1.y - center.y, 2) + pow(v1.z - center.z, 2));
+
+}
+
+[numthreads(numThread, numThread, numThread)]
+void sphere (uint3 id : SV_DispatchThreadID) //produces sphere given radius
+{
+    if (id.x >= size-1 || id.y >= size-1 || id.z >= size-1) {
+        return;
+    }
+    float4 points[8] = {
+        float4(id.x    ,id.y    ,id.z    , noiseMap[getPointIndex(id.x    ,id.y    ,id.z)]),
+        float4(id.x + 1,id.y    ,id.z    , noiseMap[getPointIndex(id.x + 1,id.y    ,id.z)]),
+        float4(id.x + 1,id.y    ,id.z + 1, noiseMap[getPointIndex(id.x + 1,id.y    ,id.z + 1)]),
+        float4(id.x    ,id.y    ,id.z + 1, noiseMap[getPointIndex(id.x    ,id.y    ,id.z + 1)]),
+        float4(id.x    ,id.y + 1,id.z    , noiseMap[getPointIndex(id.x    ,id.y + 1,id.z)]),
+        float4(id.x + 1,id.y + 1,id.z    , noiseMap[getPointIndex(id.x + 1,id.y + 1,id.z)]),
+        float4(id.x + 1,id.y + 1,id.z + 1, noiseMap[getPointIndex(id.x + 1,id.y + 1,id.z + 1)]),
+        float4(id.x    ,id.y + 1,id.z + 1, noiseMap[getPointIndex(id.x    ,id.y + 1,id.z + 1)])
+    };
+    //use cubeIndex value to get value from 0-255 that can be used in lookup table
+    int cubeIndex = 0;
+    int cubeValue = 1;
+    for(int i = 0; i < 8; i++) {
+        if (distance(points[i].xyz) > radius) {
+            points[i].w = genocide;
+        }
+        else if (points[i].w < genocide) {
+            cubeIndex |= cubeValue;
+        }
+        cubeValue = cubeValue * 2;
+    }
+    for (int i = 0; triangulation[cubeIndex][i] != -1; i += 3) {
+        int a0 = cornerIndexAFromEdge[triangulation[cubeIndex][i]];
+        int b0 = cornerIndexBFromEdge[triangulation[cubeIndex][i]];
+
+        int a1 = cornerIndexAFromEdge[triangulation[cubeIndex][i + 1]];
+        int b1 = cornerIndexBFromEdge[triangulation[cubeIndex][i + 1]];
+
+        int a2 = cornerIndexAFromEdge[triangulation[cubeIndex][i + 2]];
+        int b2 = cornerIndexBFromEdge[triangulation[cubeIndex][i + 2]];
+
+        Triangle newTriangle;
+        if (applySandpaper == false) {
+            newTriangle.vertexA = float3((points[a0].xyz + points[b0].xyz) / 2);
+            newTriangle.vertexB = float3((points[a1].xyz + points[b1].xyz) / 2);
+            newTriangle.vertexC = float3((points[a2].xyz + points[b2].xyz) / 2);
+        }
+        else
+        {
+            //try to interpolate between points
+            newTriangle.vertexA = interpolateVerts(points[a0], points[b0]);
+            newTriangle.vertexB = interpolateVerts(points[a1], points[b1]);
+            newTriangle.vertexC = interpolateVerts(points[a2], points[b2]);
+
+        }
+
+        triangles.Append(newTriangle);
+    }
+}
+
+[numthreads(numThread, numThread, numThread)]
+void normal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= size-1 || id.y >= size-1 || id.z >= size-1) {
+        return;
+    }
+    float4 points[8] = {
+        float4(id.x    ,id.y    ,id.z    , noiseMap[getPointIndex(id.x    ,id.y    ,id.z)]),
+        float4(id.x + 1,id.y    ,id.z    , noiseMap[getPointIndex(id.x + 1,id.y    ,id.z)]),
+        float4(id.x + 1,id.y    ,id.z + 1, noiseMap[getPointIndex(id.x + 1,id.y    ,id.z + 1)]),
+        float4(id.x    ,id.y    ,id.z + 1, noiseMap[getPointIndex(id.x    ,id.y    ,id.z + 1)]),
+        float4(id.x    ,id.y + 1,id.z    , noiseMap[getPointIndex(id.x    ,id.y + 1,id.z)]),
+        float4(id.x + 1,id.y + 1,id.z    , noiseMap[getPointIndex(id.x + 1,id.y + 1,id.z)]),
+        float4(id.x + 1,id.y + 1,id.z + 1, noiseMap[getPointIndex(id.x + 1,id.y + 1,id.z + 1)]),
+        float4(id.x    ,id.y + 1,id.z + 1, noiseMap[getPointIndex(id.x    ,id.y + 1,id.z + 1)])
+    };
+    //use cubeIndex value to get value from 0-255 that can be used in lookup table
+    int cubeIndex = 0;
+    int cubeValue = 1;
+
+    for (int i = 0; i < 8; i++) {
+        if (points[i].x == edge.x ||
+            points[i].y == edge.y ||
+            points[i].z == edge.z ) {
+            points[i].w = genocide;
+        }
+        else if (points[i].w < genocide) {
+            cubeIndex |= cubeValue;
+        }
+        cubeValue = cubeValue * 2;
+    }
+    for (int i = 0; triangulation[cubeIndex][i] != -1; i += 3) {
+        int a0 = cornerIndexAFromEdge[triangulation[cubeIndex][i]];
+        int b0 = cornerIndexBFromEdge[triangulation[cubeIndex][i]];
+
+        int a1 = cornerIndexAFromEdge[triangulation[cubeIndex][i + 1]];
+        int b1 = cornerIndexBFromEdge[triangulation[cubeIndex][i + 1]];
+
+        int a2 = cornerIndexAFromEdge[triangulation[cubeIndex][i + 2]];
+        int b2 = cornerIndexBFromEdge[triangulation[cubeIndex][i + 2]];
+
+        Triangle newTriangle;
+        if (applySandpaper == false) {
+            newTriangle.vertexA = float3((points[a0].xyz + points[b0].xyz) / 2);
+            newTriangle.vertexB = float3((points[a1].xyz + points[b1].xyz) / 2);
+            newTriangle.vertexC = float3((points[a2].xyz + points[b2].xyz) / 2);
+        }
+        else
+        {
+            //try to interpolate between points
+            newTriangle.vertexA = interpolateVerts(points[a0], points[b0]);
+            newTriangle.vertexB = interpolateVerts(points[a1], points[b1]);
+            newTriangle.vertexC = interpolateVerts(points[a2], points[b2]);
+
+        }
+        triangles.Append(newTriangle);
+    }
+}
